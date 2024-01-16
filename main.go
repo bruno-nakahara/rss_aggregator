@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/bruno-nakahara/rss-aggregator/internal/database"
 	"github.com/go-chi/chi/v5"
@@ -21,8 +22,8 @@ type apiConfig struct {
 func main() {
 	godotenv.Load()
 
-	portString := os.Getenv("PORT")
-	if portString == "" {
+	port := os.Getenv("PORT")
+	if port == "" {
 		log.Fatal("PORT is not found in the enviromment!")
 	}
 
@@ -35,6 +36,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Can't connect to database!")
 	}
+	dbQueries := database.New(conn)
 
 	apiCfg := apiConfig{
 		DB: database.New(conn),
@@ -54,23 +56,30 @@ func main() {
 	v1Router := chi.NewRouter()
 
 	v1Router.Get("/healthz", handlerReadiness)
+
 	v1Router.Get("/err", handlerErr)
+
 	v1Router.Post("/users", apiCfg.handlerCreateUser)
 	v1Router.Get("/users", apiCfg.middlewareAuth(apiCfg.handlerGetUser))
+
 	v1Router.Post("/feeds", apiCfg.middlewareAuth(apiCfg.handlerCreateFeed))
 	v1Router.Get("/feeds", apiCfg.handleGetFeeds)
+
+	v1Router.Post("/feed_follows", apiCfg.middlewareAuth(apiCfg.handlerCreateFeedFollow))
+	v1Router.Get("/feed_follows", apiCfg.middlewareAuth(apiCfg.handleGetFeedFollows))
+	v1Router.Delete("/feed_follows/{feedFollowID}", apiCfg.middlewareAuth(apiCfg.handleDeleteFeedFollows))
 
 	router.Mount("/v1", v1Router)
 
 	server := &http.Server{
 		Handler: router,
-		Addr:    ":" + portString,
+		Addr:    ":" + port,
 	}
 
-	log.Printf("Server running on port %v", portString)
+	const collectionConcurrency = 10
+	const collectionInterval = time.Minute
+	go startScraping(dbQueries, collectionConcurrency, collectionInterval)
 
-	err = server.ListenAndServe()
-	if err != nil {
-		log.Fatal(err)
-	}
+	log.Printf("Serving on port: %s\n", port)
+	log.Fatal(server.ListenAndServe())
 }
